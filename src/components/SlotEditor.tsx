@@ -155,11 +155,11 @@ export default function SlotEditor({ slot, onClose, onSaved }: SlotEditorProps) 
             onChange={(e) => setDiscordUserId(e.target.value)}
             className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           >
-            <option key="" value="">
+            <option value="">
               {discordUsers.length === 0 ? "No users available" : "-- Select Discord User --"}
             </option>
-            {discordUsers.map((u) => (
-              <option key={u.id} value={u.id}>
+            {discordUsers.map((u, i) => (
+              <option key={`${u.id}-${i}`} value={u.id}>
                 {u.displayName || u.username}
               </option>
             ))}
@@ -174,11 +174,11 @@ export default function SlotEditor({ slot, onClose, onSaved }: SlotEditorProps) 
             onChange={(e) => setFoundryActorId(e.target.value)}
             className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           >
-            <option key="" value="">
+            <option value="">
               {foundryActors.length === 0 ? "No actors available" : "-- Select Foundry Actor --"}
             </option>
-            {foundryActors.map((a) => (
-              <option key={a.id} value={a.id}>
+            {foundryActors.map((a, i) => (
+              <option key={`${a.id}-${i}`} value={a.id}>
                 {a.name}
               </option>
             ))}
