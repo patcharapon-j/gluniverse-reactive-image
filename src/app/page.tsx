@@ -5,6 +5,7 @@ import type { PlayerSlot } from "@/lib/types";
 import SlotList from "@/components/SlotList";
 import SlotEditor from "@/components/SlotEditor";
 import DiscordBotSetup from "@/components/DiscordBotSetup";
+import FoundrySetup from "@/components/FoundrySetup";
 
 export default function DashboardPage() {
   const [slots, setSlots] = useState<PlayerSlot[]>([]);
@@ -12,7 +13,6 @@ export default function DashboardPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingSlot, setEditingSlot] = useState<PlayerSlot | null>(null);
   const [speakingUserIds, setSpeakingUserIds] = useState<Set<string>>(new Set());
-
   const fetchSlots = useCallback(async () => {
     try {
       const res = await fetch("/api/slots");
@@ -31,7 +31,7 @@ export default function DashboardPage() {
     fetchSlots();
   }, [fetchSlots]);
 
-  // Poll for slot updates every 5s to reflect changes from other sources
+  // Poll for slot updates every 5s
   useEffect(() => {
     const interval = setInterval(fetchSlots, 5000);
     return () => clearInterval(interval);
@@ -99,6 +99,9 @@ export default function DashboardPage() {
 
       {/* Discord Bot Setup */}
       <DiscordBotSetup />
+
+      {/* Foundry VTT Setup */}
+      <FoundrySetup />
 
       {/* Content */}
       {loading ? (

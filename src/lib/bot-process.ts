@@ -1,4 +1,5 @@
 import { spawn, execSync, type ChildProcess } from "child_process";
+import { readFileSync } from "fs";
 import path from "path";
 
 let botProcess: ChildProcess | null = null;
@@ -30,10 +31,36 @@ export function startBot(): { success: boolean; error?: string } {
   addLog("[system] Starting bot...");
 
   try {
+    // Read discord config from config.json and pass as env vars
+    const botEnv: Record<string, string> = {
+      ...process.env as Record<string, string>,
+      WEBAPP_URL:
+        process.env.WEBAPP_URL ||
+        process.env.NEXT_PUBLIC_APP_URL ||
+        "http://localhost:3000",
+    };
+
+    if (process.env.API_SECRET) {
+      botEnv.API_SECRET = process.env.API_SECRET;
+    }
+
+    try {
+      const configPath = path.join(process.cwd(), "config.json");
+      const raw = readFileSync(configPath, "utf-8");
+      const config = JSON.parse(raw);
+      if (config.discord) {
+        if (config.discord.botToken) botEnv.DISCORD_BOT_TOKEN = config.discord.botToken;
+        if (config.discord.guildId) botEnv.GUILD_ID = config.discord.guildId;
+        if (config.discord.voiceChannelId) botEnv.VOICE_CHANNEL_ID = config.discord.voiceChannelId;
+      }
+    } catch {
+      // config.json not found or invalid — bot will fall back to its own env
+    }
+
     botProcess = spawn("npm", ["run", "start"], {
       cwd: botDir,
       shell: true,
-      env: { ...process.env },
+      env: botEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (err) {

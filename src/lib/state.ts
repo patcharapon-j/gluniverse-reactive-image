@@ -1,4 +1,4 @@
-import { OverlayState, HpData, VoiceStateUpdate, getHpState, type HpState } from "./types";
+import { OverlayState, HpData, VoiceStateUpdate, getHpState, resolveOverlaySettings, type HpState, type DeepPartial, type OverlaySettings } from "./types";
 
 interface SlotState {
   speaking: boolean;
@@ -8,6 +8,9 @@ interface SlotState {
 }
 
 type Listener = (slotId: string, state: OverlayState) => void;
+
+const FOUNDRY_HEARTBEAT_TIMEOUT_MS = 90_000; // 3x the 30s heartbeat interval
+const FOUNDRY_HEARTBEAT_CHECK_MS = 15_000;   // Check for staleness every 15s
 
 class StateManager {
   private slotStates: Map<string, SlotState> = new Map();
@@ -22,6 +25,35 @@ class StateManager {
   private foundryActors: Map<string, { id: string; name: string; hp: number; maxHp: number }> = new Map();
   // Image mappings: slotId -> images
   private slotImages: Map<string, { healthyIdle: string | null; healthySpeaking: string | null; bloodiedIdle: string | null; bloodiedSpeaking: string | null }> = new Map();
+  // Overlay settings per slot
+  private slotOverlaySettings: Map<string, DeepPartial<OverlaySettings>> = new Map();
+  // Foundry heartbeat tracking
+  private foundryLastHeartbeat: number | null = null;
+  private foundryHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor() {
+    // Periodically check if Foundry has gone stale and notify SSE subscribers
+    this.foundryHeartbeatTimer = setInterval(() => {
+      this.checkFoundryHeartbeat();
+    }, FOUNDRY_HEARTBEAT_CHECK_MS);
+  }
+
+  private checkFoundryHeartbeat() {
+    if (this.foundryLastHeartbeat === null) return;
+    const now = Date.now();
+    const wasConnected = (now - FOUNDRY_HEARTBEAT_CHECK_MS) - this.foundryLastHeartbeat < FOUNDRY_HEARTBEAT_TIMEOUT_MS;
+    const isNowConnected = now - this.foundryLastHeartbeat < FOUNDRY_HEARTBEAT_TIMEOUT_MS;
+    // If transitioning from connected to disconnected, notify all slots
+    if (wasConnected && !isNowConnected) {
+      this.notifyAllSlots();
+    }
+  }
+
+  private notifyAllSlots() {
+    for (const slotId of this.slotStates.keys()) {
+      this.notify(slotId);
+    }
+  }
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -35,7 +67,7 @@ class StateManager {
     }
   }
 
-  registerSlot(slotId: string, discordUserId: string | null, foundryActorId: string | null, images: { healthyIdle: string | null; healthySpeaking: string | null; bloodiedIdle: string | null; bloodiedSpeaking: string | null }) {
+  registerSlot(slotId: string, discordUserId: string | null, foundryActorId: string | null, images: { healthyIdle: string | null; healthySpeaking: string | null; bloodiedIdle: string | null; bloodiedSpeaking: string | null }, overlaySettings?: DeepPartial<OverlaySettings>) {
     if (!this.slotStates.has(slotId)) {
       this.slotStates.set(slotId, { speaking: false, hp: 100, maxHp: 100, hpState: "healthy" });
     }
@@ -49,17 +81,26 @@ class StateManager {
     if (discordUserId) this.discordUserSlotMap.set(discordUserId, slotId);
     if (foundryActorId) this.foundryActorSlotMap.set(foundryActorId, slotId);
     this.slotImages.set(slotId, images);
+    if (overlaySettings) {
+      this.slotOverlaySettings.set(slotId, overlaySettings);
+    }
   }
 
   unregisterSlot(slotId: string) {
     this.slotStates.delete(slotId);
     this.slotImages.delete(slotId);
+    this.slotOverlaySettings.delete(slotId);
     for (const [uid, sid] of this.discordUserSlotMap) {
       if (sid === slotId) this.discordUserSlotMap.delete(uid);
     }
     for (const [aid, sid] of this.foundryActorSlotMap) {
       if (sid === slotId) this.foundryActorSlotMap.delete(aid);
     }
+  }
+
+  updateSlotOverlaySettings(slotId: string, settings: DeepPartial<OverlaySettings>) {
+    this.slotOverlaySettings.set(slotId, settings);
+    this.notify(slotId);
   }
 
   handleVoiceState(update: VoiceStateUpdate) {
@@ -72,6 +113,7 @@ class StateManager {
   }
 
   handleHpUpdate(data: HpData) {
+    this.refreshFoundryHeartbeat();
     const slotId = this.foundryActorSlotMap.get(data.actorId);
     if (!slotId) return;
     const state = this.slotStates.get(slotId);
@@ -94,6 +136,7 @@ class StateManager {
   }
 
   setFoundryActors(actors: Array<{ id: string; name: string; hp: number; maxHp: number }>) {
+    this.refreshFoundryHeartbeat();
     this.foundryActors.clear();
     for (const a of actors) {
       this.foundryActors.set(a.id, a);
@@ -107,8 +150,9 @@ class StateManager {
   getOverlayState(slotId: string): OverlayState {
     const state = this.slotStates.get(slotId);
     const images = this.slotImages.get(slotId);
+    const settingsPartial = this.slotOverlaySettings.get(slotId);
     if (!state || !images) {
-      return { slotId, speaking: false, hpState: "healthy", currentImage: null, connected: true };
+      return { slotId, speaking: false, hpState: "healthy", currentImage: null, overlaySettings: resolveOverlaySettings(settingsPartial), connected: this.isFoundryConnected() };
     }
     const imageKey = state.speaking
       ? (state.hpState === "healthy" ? "healthySpeaking" : "bloodiedSpeaking")
@@ -118,8 +162,31 @@ class StateManager {
       speaking: state.speaking,
       hpState: state.hpState,
       currentImage: images[imageKey],
-      connected: true,
+      overlaySettings: resolveOverlaySettings(settingsPartial),
+      connected: this.isFoundryConnected(),
     };
+  }
+
+  handleFoundryHeartbeat() {
+    this.refreshFoundryHeartbeat();
+  }
+
+  isFoundryConnected(): boolean {
+    if (this.foundryLastHeartbeat === null) return false;
+    return Date.now() - this.foundryLastHeartbeat < FOUNDRY_HEARTBEAT_TIMEOUT_MS;
+  }
+
+  getFoundryLastHeartbeat(): number | null {
+    return this.foundryLastHeartbeat;
+  }
+
+  private refreshFoundryHeartbeat() {
+    const wasConnected = this.isFoundryConnected();
+    this.foundryLastHeartbeat = Date.now();
+    // If transitioning from disconnected to connected, notify all slots
+    if (!wasConnected) {
+      this.notifyAllSlots();
+    }
   }
 
   getAllSlotStates(): Map<string, OverlayState> {

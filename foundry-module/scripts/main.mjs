@@ -85,16 +85,25 @@ function getConnectionSettings() {
   return { webappUrl: webappUrl.replace(/\/+$/, ""), apiSecret };
 }
 
+// ---------------------------------------------------------------------------
+// Connection state tracking
+// ---------------------------------------------------------------------------
+
+let _pushFailureNotified = false;
+let _heartbeatConnectedNotified = false;
+let _heartbeatInterval = null;
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
 /**
- * POST JSON to the web app's /api/state endpoint.  Swallows all errors so
- * that a network failure never crashes Foundry.
+ * POST JSON to the web app's /api/state endpoint.  Shows a warning
+ * notification on first failure and suppresses repeated failure messages.
  */
 async function pushToWebApp(body) {
   const conn = getConnectionSettings();
   if (!conn) return;
 
   try {
-    await fetch(`${conn.webappUrl}/api/state`, {
+    const res = await fetch(`${conn.webappUrl}/api/state`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -102,9 +111,55 @@ async function pushToWebApp(body) {
       },
       body: JSON.stringify(body),
     });
+    if (res.ok) {
+      // Reset failure flag on success so next failure gets a notification
+      _pushFailureNotified = false;
+    }
   } catch (err) {
+    if (!_pushFailureNotified) {
+      _pushFailureNotified = true;
+      ui.notifications?.warn(`${MODULE_ID} | Cannot reach web app. Will keep retrying silently.`);
+    }
     console.warn(`${MODULE_ID} | Failed to push state to web app:`, err);
   }
+}
+
+/**
+ * Send a heartbeat to the web app so it knows Foundry is still connected.
+ */
+async function sendHeartbeat() {
+  const conn = getConnectionSettings();
+  if (!conn) return;
+
+  try {
+    const res = await fetch(`${conn.webappUrl}/api/state`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-secret": conn.apiSecret,
+      },
+      body: JSON.stringify({ type: "foundry-heartbeat" }),
+    });
+    if (res.ok && !_heartbeatConnectedNotified) {
+      _heartbeatConnectedNotified = true;
+      ui.notifications?.info(`${MODULE_ID} | Connected to web app.`);
+    }
+    if (!res.ok) {
+      _heartbeatConnectedNotified = false;
+    }
+  } catch {
+    _heartbeatConnectedNotified = false;
+  }
+}
+
+/**
+ * Start the heartbeat loop. Sends immediately, then repeats every 30s.
+ */
+function startHeartbeat() {
+  // Clear any existing interval (e.g. on re-init)
+  if (_heartbeatInterval) clearInterval(_heartbeatInterval);
+  sendHeartbeat();
+  _heartbeatInterval = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
 }
 
 /**
@@ -161,6 +216,9 @@ Hooks.on("ready", () => {
   const roster = buildRoster();
   console.log(`${MODULE_ID} | Pushing roster of ${roster.length} actors to web app.`);
   pushToWebApp({ type: "roster", data: roster });
+
+  // Start heartbeat loop so the web app knows Foundry is alive
+  startHeartbeat();
 });
 
 /**

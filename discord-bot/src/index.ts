@@ -47,8 +47,10 @@ function resolveConfig(envName: string, fileValue: string | undefined): string {
 const DISCORD_BOT_TOKEN = resolveConfig("DISCORD_BOT_TOKEN", fileConfig?.botToken);
 const GUILD_ID = resolveConfig("GUILD_ID", fileConfig?.guildId);
 const VOICE_CHANNEL_ID = resolveConfig("VOICE_CHANNEL_ID", fileConfig?.voiceChannelId);
-const WEBAPP_URL = requireEnv("WEBAPP_URL");
-const API_SECRET = requireEnv("API_SECRET");
+const WEBAPP_URL = process.env.WEBAPP_URL || "http://localhost:3000";
+const API_SECRET = process.env.API_SECRET || "";
+console.log(`[config] WEBAPP_URL = ${WEBAPP_URL}${process.env.WEBAPP_URL ? " (from environment)" : " (default)"}`);
+if (!API_SECRET) console.log("[config] API_SECRET not set — requests will be unauthenticated");
 
 // ---------------------------------------------------------------------------
 // State helpers
@@ -58,7 +60,7 @@ const API_SECRET = requireEnv("API_SECRET");
 const speakingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** How long (ms) after the last speaking packet before we consider the user silent. */
-const SPEAKING_TIMEOUT_MS = 300;
+const SPEAKING_TIMEOUT_MS = 100;
 
 // ---------------------------------------------------------------------------
 // HTTP helper – push state to web app

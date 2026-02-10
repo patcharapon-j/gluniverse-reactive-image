@@ -1,7 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
-import type { AppConfig, PlayerSlot, CreateSlotPayload, UpdateSlotPayload, ImageSet, DiscordBotConfig } from "./types";
+import type { AppConfig, PlayerSlot, CreateSlotPayload, UpdateSlotPayload, ImageSet, DiscordBotConfig, FoundryConfig, DeepPartial, OverlaySettings } from "./types";
 import { stateManager } from "./state";
 
 const CONFIG_PATH = path.join(process.cwd(), "config.json");
@@ -24,7 +24,7 @@ export async function loadConfig(): Promise<AppConfig> {
   }
   // Register all slots in state manager
   for (const slot of cachedConfig.slots) {
-    stateManager.registerSlot(slot.id, slot.discordUserId, slot.foundryActorId, slot.images);
+    stateManager.registerSlot(slot.id, slot.discordUserId, slot.foundryActorId, slot.images, slot.overlaySettings);
   }
   return cachedConfig;
 }
@@ -68,7 +68,7 @@ export async function createSlot(payload: CreateSlotPayload): Promise<PlayerSlot
   };
   config.slots.push(slot);
   await saveConfig(config);
-  stateManager.registerSlot(slot.id, slot.discordUserId, slot.foundryActorId, slot.images);
+  stateManager.registerSlot(slot.id, slot.discordUserId, slot.foundryActorId, slot.images, slot.overlaySettings);
   return slot;
 }
 
@@ -82,10 +82,11 @@ export async function updateSlot(id: string, payload: UpdateSlotPayload): Promis
   if (payload.discordUsername !== undefined) slot.discordUsername = payload.discordUsername ?? null;
   if (payload.foundryActorId !== undefined) slot.foundryActorId = payload.foundryActorId ?? null;
   if (payload.foundryActorName !== undefined) slot.foundryActorName = payload.foundryActorName ?? null;
+  if (payload.overlaySettings !== undefined) slot.overlaySettings = payload.overlaySettings;
   slot.updatedAt = new Date().toISOString();
   config.slots[idx] = slot;
   await saveConfig(config);
-  stateManager.registerSlot(slot.id, slot.discordUserId, slot.foundryActorId, slot.images);
+  stateManager.registerSlot(slot.id, slot.discordUserId, slot.foundryActorId, slot.images, slot.overlaySettings);
   return slot;
 }
 
@@ -127,6 +128,38 @@ export function maskDiscordConfig(discord: DiscordBotConfig): Omit<DiscordBotCon
   };
 }
 
+// ===== Foundry VTT Config =====
+
+export async function getFoundryConfig(): Promise<FoundryConfig | null> {
+  const config = await loadConfig();
+  return config.foundry ?? null;
+}
+
+export async function saveFoundryConfig(foundry: FoundryConfig): Promise<void> {
+  const config = await loadConfig();
+  config.foundry = foundry;
+  await saveConfig(config);
+}
+
+export async function clearFoundryConfig(): Promise<void> {
+  const config = await loadConfig();
+  delete config.foundry;
+  await saveConfig(config);
+}
+
+export async function updateSlotOverlaySettings(id: string, overlaySettings: DeepPartial<OverlaySettings>): Promise<PlayerSlot | null> {
+  const config = await loadConfig();
+  const idx = config.slots.findIndex((s) => s.id === id);
+  if (idx === -1) return null;
+  const slot = config.slots[idx];
+  slot.overlaySettings = overlaySettings;
+  slot.updatedAt = new Date().toISOString();
+  config.slots[idx] = slot;
+  await saveConfig(config);
+  stateManager.updateSlotOverlaySettings(slot.id, overlaySettings);
+  return slot;
+}
+
 export async function updateSlotImages(id: string, images: Partial<ImageSet>): Promise<PlayerSlot | null> {
   const config = await loadConfig();
   const idx = config.slots.findIndex((s) => s.id === id);
@@ -139,6 +172,6 @@ export async function updateSlotImages(id: string, images: Partial<ImageSet>): P
   slot.updatedAt = new Date().toISOString();
   config.slots[idx] = slot;
   await saveConfig(config);
-  stateManager.registerSlot(slot.id, slot.discordUserId, slot.foundryActorId, slot.images);
+  stateManager.registerSlot(slot.id, slot.discordUserId, slot.foundryActorId, slot.images, slot.overlaySettings);
   return slot;
 }

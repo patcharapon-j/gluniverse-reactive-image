@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import type { PlayerSlot, DiscordUser, FoundryActor, ImageSet } from "@/lib/types";
+import type { PlayerSlot, DiscordUser, FoundryActor, ImageSet, DeepPartial, OverlaySettings } from "@/lib/types";
+import OverlaySettingsEditor from "./OverlaySettingsEditor";
 
 const IMAGE_KEYS: { key: keyof ImageSet; label: string }[] = [
   { key: "healthyIdle", label: "Healthy Idle" },
@@ -24,6 +25,8 @@ export default function SlotEditor({ slot, onClose, onSaved }: SlotEditorProps) 
   const [foundryActors, setFoundryActors] = useState<FoundryActor[]>([]);
   const [imageFiles, setImageFiles] = useState<Partial<Record<keyof ImageSet, File>>>({});
   const [imagePreviews, setImagePreviews] = useState<Partial<Record<keyof ImageSet, string>>>({});
+  const [overlaySettings, setOverlaySettings] = useState<DeepPartial<OverlaySettings>>(slot?.overlaySettings ?? {});
+  const [showOverlaySettings, setShowOverlaySettings] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
@@ -66,6 +69,7 @@ export default function SlotEditor({ slot, onClose, onSaved }: SlotEditorProps) 
         discordUsername: selectedDiscordUser?.displayName ?? selectedDiscordUser?.username ?? null,
         foundryActorId: foundryActorId || null,
         foundryActorName: selectedFoundryActor?.name ?? null,
+        overlaySettings,
       };
 
       let savedSlot: PlayerSlot;
@@ -120,7 +124,7 @@ export default function SlotEditor({ slot, onClose, onSaved }: SlotEditorProps) 
       onClick={handleBackdropClick}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
     >
-      <div className="w-full max-w-lg rounded-xl border border-gray-700 bg-gray-900 p-6 shadow-2xl">
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 p-6 shadow-2xl">
         <h2 className="mb-4 text-xl font-semibold text-gray-100">
           {slot ? "Edit Slot" : "Create Slot"}
         </h2>
@@ -226,6 +230,31 @@ export default function SlotEditor({ slot, onClose, onSaved }: SlotEditorProps) 
               );
             })}
           </div>
+        </div>
+
+        {/* Overlay Settings - collapsible */}
+        <div className="mb-5">
+          <button
+            type="button"
+            onClick={() => setShowOverlaySettings(!showOverlaySettings)}
+            className="flex w-full items-center justify-between rounded-lg border border-gray-700 bg-gray-800/50 px-4 py-2.5 text-sm font-medium text-gray-300 transition hover:bg-gray-800"
+          >
+            <span>Overlay Settings</span>
+            <svg
+              className={`h-4 w-4 text-gray-500 transition-transform ${showOverlaySettings ? "rotate-180" : ""}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {showOverlaySettings && (
+            <div className="mt-3 rounded-lg border border-gray-700 bg-gray-800/30 p-4">
+              <OverlaySettingsEditor
+                settings={overlaySettings}
+                onChange={setOverlaySettings}
+              />
+            </div>
+          )}
         </div>
 
         {/* Buttons */}
