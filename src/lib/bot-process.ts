@@ -110,16 +110,49 @@ export function startBot(): { success: boolean; error?: string } {
   return { success: true };
 }
 
-export function stopBot(): { success: boolean; error?: string } {
+export async function stopBot(): Promise<{ success: boolean; error?: string }> {
   if (!isBotRunning() || !botProcess) {
     return { success: false, error: "Bot is not running" };
   }
 
   intentionallyStopped = true;
   addLog("[system] Stopping bot...");
+
+  // Disconnect from Discord voice via REST API before killing the process,
+  // since force-kill on Windows doesn't allow graceful shutdown.
+  await disconnectBotFromDiscord();
+
   killBotProcess();
 
   return { success: true };
+}
+
+/**
+ * Tell Discord's API to disconnect the bot from voice and close the gateway.
+ * This ensures the bot leaves the voice channel even when the process is force-killed.
+ */
+async function disconnectBotFromDiscord() {
+  try {
+    const configPath = path.join(process.cwd(), "config.json");
+    const raw = readFileSync(configPath, "utf-8");
+    const config = JSON.parse(raw);
+    const token = config.discord?.botToken;
+    const guildId = config.discord?.guildId;
+    if (!token || !guildId) return;
+
+    // Disconnect bot from voice channel via REST API
+    await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/@me`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bot ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ channel_id: null }),
+    });
+    addLog("[system] Disconnected bot from voice channel via Discord API.");
+  } catch {
+    // Best-effort — if this fails, the process kill will still happen
+  }
 }
 
 function killBotProcess() {
@@ -146,13 +179,21 @@ function killBotProcess() {
 }
 
 // Kill the bot when the Next.js server shuts down
-function cleanupOnExit() {
+function cleanupOnExitSync() {
   if (botProcess && botProcess.exitCode === null) {
     intentionallyStopped = true;
     killBotProcess();
   }
 }
 
-process.on("exit", cleanupOnExit);
-process.on("SIGINT", () => { cleanupOnExit(); process.exit(0); });
-process.on("SIGTERM", () => { cleanupOnExit(); process.exit(0); });
+async function cleanupOnExitAsync() {
+  if (botProcess && botProcess.exitCode === null) {
+    intentionallyStopped = true;
+    await disconnectBotFromDiscord();
+    killBotProcess();
+  }
+}
+
+process.on("exit", cleanupOnExitSync);
+process.on("SIGINT", async () => { await cleanupOnExitAsync(); process.exit(0); });
+process.on("SIGTERM", async () => { await cleanupOnExitAsync(); process.exit(0); });

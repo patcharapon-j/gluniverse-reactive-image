@@ -3,7 +3,7 @@ import { stopBot, getBotStatus } from "@/lib/bot-process";
 
 export async function POST() {
   try {
-    const result = stopBot();
+    const result = await stopBot();
     if (!result.success) {
       return NextResponse.json({ error: result.error }, { status: 409 });
     }
