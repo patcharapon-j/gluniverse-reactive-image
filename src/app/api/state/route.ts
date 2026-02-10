@@ -61,10 +61,16 @@ export async function POST(request: NextRequest) {
 
       case "roster":
       case "foundry-actors": {
-        const actors = data as Array<{ id: string; name: string; hp: number; maxHp: number }>;
-        if (!Array.isArray(actors)) {
+        if (!Array.isArray(data)) {
           return json({ error: "Invalid actors data" }, 400);
         }
+        // Foundry module sends actorId/actorName, normalize to id/name
+        const actors = data.map((a: Record<string, unknown>) => ({
+          id: (a.actorId ?? a.id) as string,
+          name: (a.actorName ?? a.name) as string,
+          hp: a.hp as number,
+          maxHp: a.maxHp as number,
+        }));
         stateManager.setFoundryActors(actors);
         return json({ success: true });
       }

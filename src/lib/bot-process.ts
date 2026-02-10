@@ -4,7 +4,11 @@ import path from "path";
 
 let botProcess: ChildProcess | null = null;
 let botLogs: string[] = [];
+let intentionallyStopped = false;
+let restartAttempts = 0;
 const MAX_LOG_LINES = 100;
+const MAX_RESTART_ATTEMPTS = 5;
+const RESTART_DELAY_MS = 3000;
 
 function addLog(line: string) {
   botLogs.push(line);
@@ -28,6 +32,8 @@ export function startBot(): { success: boolean; error?: string } {
 
   const botDir = path.join(process.cwd(), "discord-bot");
   botLogs = [];
+  intentionallyStopped = false;
+  restartAttempts = 0;
   addLog("[system] Starting bot...");
 
   try {
@@ -80,6 +86,20 @@ export function startBot(): { success: boolean; error?: string } {
   botProcess.on("exit", (code) => {
     addLog(`[system] Bot exited with code ${code}`);
     botProcess = null;
+
+    if (!intentionallyStopped && code !== 0) {
+      restartAttempts++;
+      if (restartAttempts <= MAX_RESTART_ATTEMPTS) {
+        addLog(`[system] Unexpected exit — restarting in ${RESTART_DELAY_MS / 1000}s (attempt ${restartAttempts}/${MAX_RESTART_ATTEMPTS})...`);
+        setTimeout(() => {
+          if (!intentionallyStopped && !isBotRunning()) {
+            startBot();
+          }
+        }, RESTART_DELAY_MS);
+      } else {
+        addLog(`[system] Too many restart attempts (${MAX_RESTART_ATTEMPTS}). Giving up. Use the dashboard to restart manually.`);
+      }
+    }
   });
 
   botProcess.on("error", (err) => {
@@ -95,7 +115,15 @@ export function stopBot(): { success: boolean; error?: string } {
     return { success: false, error: "Bot is not running" };
   }
 
+  intentionallyStopped = true;
   addLog("[system] Stopping bot...");
+  killBotProcess();
+
+  return { success: true };
+}
+
+function killBotProcess() {
+  if (!botProcess) return;
   const pid = botProcess.pid;
 
   if (process.platform === "win32" && pid) {
@@ -115,6 +143,16 @@ export function stopBot(): { success: boolean; error?: string } {
       }
     }, 5000);
   }
-
-  return { success: true };
 }
+
+// Kill the bot when the Next.js server shuts down
+function cleanupOnExit() {
+  if (botProcess && botProcess.exitCode === null) {
+    intentionallyStopped = true;
+    killBotProcess();
+  }
+}
+
+process.on("exit", cleanupOnExit);
+process.on("SIGINT", () => { cleanupOnExit(); process.exit(0); });
+process.on("SIGTERM", () => { cleanupOnExit(); process.exit(0); });
