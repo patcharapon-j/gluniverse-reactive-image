@@ -1,0 +1,194 @@
+const MODULE_ID = "gluniverse-reactive-image";
+
+// ---------------------------------------------------------------------------
+// System-specific HP path presets
+// ---------------------------------------------------------------------------
+
+const SYSTEM_PRESETS = {
+  dnd5e: { hpPath: "attributes.hp.value", maxHpPath: "attributes.hp.max" },
+  pf2e:  { hpPath: "attributes.hp.value", maxHpPath: "attributes.hp.max" },
+};
+
+/**
+ * Return the HP path defaults for the current game system.
+ * Falls back to the dnd5e preset for unknown systems.
+ */
+function getSystemDefaults() {
+  const systemId = game.system?.id;
+  return SYSTEM_PRESETS[systemId] ?? SYSTEM_PRESETS.dnd5e;
+}
+
+// ---------------------------------------------------------------------------
+// Settings Registration
+// ---------------------------------------------------------------------------
+
+Hooks.once("init", () => {
+  const defaults = getSystemDefaults();
+
+  game.settings.register(MODULE_ID, "webappUrl", {
+    name: "Web App URL",
+    hint: "The base URL of the GLUniverse Reactive Image web app (e.g. https://example.vercel.app).",
+    scope: "world",
+    config: true,
+    type: String,
+    default: "",
+  });
+
+  game.settings.register(MODULE_ID, "apiSecret", {
+    name: "API Secret",
+    hint: "The shared secret used to authenticate with the web app (must match the server's API_SECRET env variable).",
+    scope: "world",
+    config: true,
+    type: String,
+    default: "",
+  });
+
+  game.settings.register(MODULE_ID, "hpPath", {
+    name: "HP Attribute Path",
+    hint: `Dot-notation path to HP value relative to actor.system. Auto-detected for DnD5e and PF2e. Current system: ${game.system?.id ?? "unknown"}.`,
+    scope: "world",
+    config: true,
+    type: String,
+    default: defaults.hpPath,
+  });
+
+  game.settings.register(MODULE_ID, "maxHpPath", {
+    name: "Max HP Attribute Path",
+    hint: `Dot-notation path to max HP relative to actor.system. Auto-detected for DnD5e and PF2e. Current system: ${game.system?.id ?? "unknown"}.`,
+    scope: "world",
+    config: true,
+    type: String,
+    default: defaults.maxHpPath,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a dot-notation path on an object. Returns undefined if any segment
+ * is missing.
+ */
+function resolvePath(obj, path) {
+  return path.split(".").reduce((cur, key) => cur?.[key], obj);
+}
+
+/**
+ * Read the current settings for webapp URL and API secret.  Returns null when
+ * the module is not configured yet so callers can bail out early.
+ */
+function getConnectionSettings() {
+  const webappUrl = game.settings.get(MODULE_ID, "webappUrl");
+  const apiSecret = game.settings.get(MODULE_ID, "apiSecret");
+  if (!webappUrl) return null;
+  return { webappUrl: webappUrl.replace(/\/+$/, ""), apiSecret };
+}
+
+/**
+ * POST JSON to the web app's /api/state endpoint.  Swallows all errors so
+ * that a network failure never crashes Foundry.
+ */
+async function pushToWebApp(body) {
+  const conn = getConnectionSettings();
+  if (!conn) return;
+
+  try {
+    await fetch(`${conn.webappUrl}/api/state`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-secret": conn.apiSecret,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    console.warn(`${MODULE_ID} | Failed to push state to web app:`, err);
+  }
+}
+
+/**
+ * Extract HP data for a single actor using the configured attribute paths.
+ * Returns null if the actor has no valid HP data.
+ */
+function extractHpData(actor) {
+  const hpPath = game.settings.get(MODULE_ID, "hpPath");
+  const maxHpPath = game.settings.get(MODULE_ID, "maxHpPath");
+
+  const hp = resolvePath(actor.system, hpPath);
+  const maxHp = resolvePath(actor.system, maxHpPath);
+
+  if (hp == null || maxHp == null) return null;
+
+  return {
+    actorId: actor.id,
+    actorName: actor.name,
+    hp: Number(hp),
+    maxHp: Number(maxHp),
+  };
+}
+
+/**
+ * Build the full roster of character actors with HP data.
+ */
+function buildRoster() {
+  const roster = [];
+  for (const actor of game.actors) {
+    if (actor.type !== "character") continue;
+    const data = extractHpData(actor);
+    if (data) roster.push(data);
+  }
+  return roster;
+}
+
+// ---------------------------------------------------------------------------
+// Hooks
+// ---------------------------------------------------------------------------
+
+/**
+ * On world ready: push the full actor roster to the web app so it has an
+ * initial snapshot of every character's HP.
+ */
+Hooks.on("ready", () => {
+  const conn = getConnectionSettings();
+  if (!conn) {
+    console.log(`${MODULE_ID} | No web app URL configured – skipping initial roster push.`);
+    return;
+  }
+
+  console.log(`${MODULE_ID} | Game system detected: ${game.system?.id ?? "unknown"}`);
+
+  const roster = buildRoster();
+  console.log(`${MODULE_ID} | Pushing roster of ${roster.length} actors to web app.`);
+  pushToWebApp({ type: "roster", data: roster });
+});
+
+/**
+ * On actor update: detect HP changes and push the new values to the web app.
+ *
+ * The `changed` object mirrors the document diff – we check whether the
+ * configured HP paths are present anywhere in it.  Because the paths are
+ * relative to `actor.system`, we look inside `changed.system`.
+ */
+Hooks.on("updateActor", (actor, changed, _options, _userId) => {
+  // Only care about character actors
+  if (actor.type !== "character") return;
+
+  // Quick check: did the system data change at all?
+  if (!changed.system) return;
+
+  const hpPath = game.settings.get(MODULE_ID, "hpPath");
+  const maxHpPath = game.settings.get(MODULE_ID, "maxHpPath");
+
+  // Check if either HP-related path was touched in the diff
+  const hpChanged = resolvePath(changed.system, hpPath) !== undefined;
+  const maxHpChanged = resolvePath(changed.system, maxHpPath) !== undefined;
+
+  if (!hpChanged && !maxHpChanged) return;
+
+  const data = extractHpData(actor);
+  if (!data) return;
+
+  console.log(`${MODULE_ID} | HP changed for ${data.actorName}: ${data.hp}/${data.maxHp}`);
+  pushToWebApp({ type: "hp", data });
+});
