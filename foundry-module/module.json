@@ -2,7 +2,7 @@
   "id": "gluniverse-reactive-image",
   "title": "GLUniverse Reactive Image",
   "description": "Pushes actor HP data from Foundry VTT to the GLUniverse Reactive Image web app for stream overlays. Supports DnD5e and PF2e with automatic system detection.",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "compatibility": {
     "minimum": "12",
     "verified": "13"

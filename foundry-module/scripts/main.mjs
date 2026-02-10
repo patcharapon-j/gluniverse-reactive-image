@@ -19,6 +19,29 @@ function getSystemDefaults() {
 }
 
 // ---------------------------------------------------------------------------
+// Reconnect Menu (Foundry FormApplication for settings button)
+// ---------------------------------------------------------------------------
+
+class ReconnectMenuApp extends FormApplication {
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: `${MODULE_ID}-reconnect`,
+      title: "GLUniverse – Reconnect",
+      template: null,
+      width: 300,
+    });
+  }
+
+  /** Skip rendering a form — just run reconnect and close. */
+  async render(force, options) {
+    await reconnect();
+    return this;
+  }
+
+  async _updateObject() {}
+}
+
+// ---------------------------------------------------------------------------
 // Settings Registration
 // ---------------------------------------------------------------------------
 
@@ -60,7 +83,42 @@ Hooks.once("init", () => {
     type: String,
     default: defaults.maxHpPath,
   });
+
+  game.settings.registerMenu(MODULE_ID, "reconnectMenu", {
+    name: "Reconnect to Web App",
+    label: "Reconnect",
+    hint: "Re-push the actor roster and restart the heartbeat. Use this after changing settings or if the web app lost connection.",
+    icon: "fas fa-sync",
+    type: ReconnectMenuApp,
+    restricted: true,
+  });
 });
+
+// ---------------------------------------------------------------------------
+// Reconnect
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-push the full actor roster and restart the heartbeat loop.
+ * Called from the settings menu button and exposed on the module API.
+ */
+async function reconnect() {
+  const conn = getConnectionSettings();
+  if (!conn) {
+    ui.notifications?.warn(`${MODULE_ID} | Set a Web App URL in module settings first.`);
+    return;
+  }
+
+  // Reset notification flags so user gets fresh feedback
+  _pushFailureNotified = false;
+  _heartbeatConnectedNotified = false;
+
+  const roster = buildRoster();
+  console.log(`${MODULE_ID} | Reconnecting – pushing roster of ${roster.length} actors.`);
+  await pushToWebApp({ type: "roster", data: roster });
+  startHeartbeat();
+  ui.notifications?.info(`${MODULE_ID} | Reconnection initiated.`);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -219,6 +277,10 @@ Hooks.on("ready", () => {
 
   // Start heartbeat loop so the web app knows Foundry is alive
   startHeartbeat();
+
+  // Expose API for macros: game.modules.get("gluniverse-reactive-image").api.reconnect()
+  const mod = game.modules.get(MODULE_ID);
+  if (mod) mod.api = { reconnect };
 });
 
 /**
